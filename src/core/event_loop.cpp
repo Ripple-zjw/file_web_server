@@ -233,7 +233,7 @@ void EventLoop::handle_timer() noexcept
  * @param ev   kevent 事件结构体（当前未使用）
  */
 void EventLoop::handle_connection_event(Connection* conn,
-                                        const struct kevent& ev) noexcept
+                                        const struct kevent&) noexcept
 {
     process_connection(conn);
 }
