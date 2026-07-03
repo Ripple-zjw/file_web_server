@@ -70,6 +70,7 @@ public:
     SSL* new_ssl() const noexcept {
         if (!ctx_) return nullptr;
         auto ssl = SSL_new(ctx_);
+        if (!ssl) return nullptr;
         SSL_set_accept_state(ssl);
         return ssl;
     }
