@@ -1,0 +1,4 @@
+build/
+cert/cert.pem
+cert/key.pem
+.DS_Store
