@@ -51,8 +51,12 @@ void EventLoop::add_listener(int fd) noexcept
               &listener_tag_);
 
     // Register 1-second periodic timer for keep-alive sweep
-    add_event(0, EVFILT_TIMER, EV_ADD | EV_ENABLE | EV_CLEAR,
-              &timer_tag_);
+    {
+        struct kevent tev;
+        EV_SET(&tev, 1, EVFILT_TIMER, EV_ADD | EV_ENABLE | EV_CLEAR,
+               NOTE_SECONDS, 1, &timer_tag_);
+        changelist_.push_back(tev);
+    }
 
     flush_changelist();
 }
