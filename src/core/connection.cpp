@@ -47,7 +47,9 @@ void Connection::reset() noexcept
     chunk_sent_ = 0;
     is_head_ = false;
 
-    // Keep read_buf_ for pipelining (may have next request already)
+    // 清空读缓冲区：当前未正确支持 pipelining，
+    // 保留旧数据会导致内存膨胀和重复响应
+    read_buf_.clear();
 }
 
 void Connection::close() noexcept
