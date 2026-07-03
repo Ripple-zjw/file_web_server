@@ -8,15 +8,25 @@
 #include <string>
 #include <string_view>
 
+/// 服务器运行配置，由命令行参数填充
 struct ServerConfig {
-    std::string root_dir;
-    uint16_t port = 8080;
-    std::optional<std::string> cert_file;
-    std::optional<std::string> key_file;
-    int keep_alive_timeout = 75;
-    bool help = false;
+    std::string root_dir;                    ///< 文件服务根目录
+    uint16_t port = 8080;                    ///< 监听端口
+    std::optional<std::string> cert_file;    ///< TLS 证书文件路径
+    std::optional<std::string> key_file;     ///< TLS 私钥文件路径
+    int keep_alive_timeout = 75;             ///< Keep-Alive 超时秒数
+    bool help = false;                       ///< 是否显示帮助
 };
 
+/**
+ * @brief 解析命令行参数，生成 ServerConfig。
+ *
+ * 支持的选项：--root、--port、--cert、--key、--timeout、--help/-h。
+ * --cert 和 --key 必须成对出现，否则报错退出。遇到未知选项也直接退出。
+ *
+ * @param args 命令行参数 span（包括 argv[0] 程序名）
+ * @return 解析完成的 ServerConfig 结构体，root_dir 默认为 "."
+ */
 [[nodiscard]] inline ServerConfig
 parse_args(std::span<char*> args) noexcept
 {
@@ -77,6 +87,10 @@ parse_args(std::span<char*> args) noexcept
     return cfg;
 }
 
+/**
+ * @brief 打印命令行帮助信息。
+ * @param prog 程序名（argv[0]）
+ */
 inline void print_help(const char* prog) noexcept
 {
     std::cout << "Usage: " << prog << " [options]\n"
