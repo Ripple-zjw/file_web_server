@@ -206,6 +206,13 @@ void EventLoop::process_connection(Connection* conn) noexcept
         return;
     }
 
+    // 若 do_read 已完成头部读取并转入 PARSING 状态，则立即解析
+    if (conn->state() == Connection::State::PARSING &&
+        conn->request().method() == HttpRequest::Method::UNKNOWN)
+    {
+        want = conn->do_parse();
+    }
+
     // If parse succeeded and we have a valid request, prepare the response
     if ((conn->state() == Connection::State::PARSING ||
          conn->state() == Connection::State::READING) &&
