@@ -154,7 +154,9 @@ void EventLoop::dispatch(const struct kevent& ev) noexcept
     if (ev.flags & EV_ERROR) {
         DEBUG_LOG("EV_ERROR ident=%lu filter=%d", ev.ident, ev.filter);
         // fd 上的错误事件 —— 关闭对应连接
-        if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_) {
+        // 注意：EV_DELETE 操作失败的返回事件 udata 可能为 nullptr
+        if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_ &&
+            ev.udata != nullptr) {
             auto* conn = static_cast<Connection*>(ev.udata);
             destroy_connection(conn);
         }
@@ -163,7 +165,8 @@ void EventLoop::dispatch(const struct kevent& ev) noexcept
 
     if (ev.flags & EV_EOF) {
         // 对端关闭连接
-        if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_) {
+        if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_ &&
+            ev.udata != nullptr) {
             auto* conn = static_cast<Connection*>(ev.udata);
             DEBUG_LOG("EV_EOF conn=%p fd=%d", (void*)conn, conn->fd());
             destroy_connection(conn);
