@@ -1,5 +1,6 @@
 #include "connection.h"
 
+#include "core/debug_log.h"
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -41,6 +42,7 @@ void Connection::init(int fd, SSL* ssl, std::string root_dir,
     chunk_used_ = 0;
     chunk_sent_ = 0;
     is_head_ = false;
+    DEBUG_LOG("fd=%d tls=%d", fd, ssl ? 1 : 0);
 }
 
 /**
@@ -69,6 +71,7 @@ void Connection::reset() noexcept
     // 清空读缓冲区：当前未正确支持 pipelining，
     // 保留旧数据会导致内存膨胀和重复响应
     read_buf_.clear();
+    DEBUG_LOG("fd=%d", fd_);
 }
 
 /**
@@ -80,6 +83,7 @@ void Connection::reset() noexcept
 void Connection::close() noexcept
 {
     if (state_ == State::CLOSED) return;
+    DEBUG_LOG("fd=%d", fd_);
 
     if (fd_ >= 0) {
         ::shutdown(fd_, SHUT_RDWR);
@@ -119,6 +123,7 @@ Connection::Want Connection::do_tls_accept() noexcept
 {
     int ret = SSL_accept(ssl_);
     if (ret == 1) {
+        DEBUG_LOG("TLS handshake complete fd=%d", fd_);
         state_ = State::READING;
         last_active_ = Clock::now();
         return Want::READ;
@@ -131,6 +136,7 @@ Connection::Want Connection::do_tls_accept() noexcept
         return Want::WRITE;
 
     // TLS 严重错误 → 发送 500 错误响应
+    DEBUG_LOG("TLS error fd=%d err=%d", fd_, err);
     response_.set_status(HttpResponse::Status::INTERNAL_ERROR);
     response_.set_body(HttpResponse::error_body(HttpResponse::Status::INTERNAL_ERROR));
     response_.set_keep_alive(false);
@@ -194,6 +200,7 @@ Connection::Want Connection::do_read() noexcept
     }
 
     read_buf_.resize(old_size + static_cast<size_t>(n));
+    DEBUG_LOG("fd=%d read %zu bytes, buf=%zu", fd_, static_cast<size_t>(n), read_buf_.size());
 
     // 检查是否已接收到完整的 HTTP 头部终止标记
     std::string_view buf(read_buf_.data(), read_buf_.size());
@@ -205,6 +212,7 @@ Connection::Want Connection::do_read() noexcept
 
     // 头部大小超过 64KB → 关闭连接（拒绝超大请求头攻击）
     if (read_buf_.size() > 65536) {
+        DEBUG_LOG("header too large fd=%d buf=%zu", fd_, read_buf_.size());
         close();
         return Want::NONE;
     }
@@ -228,6 +236,10 @@ Connection::Want Connection::do_parse() noexcept
 {
     std::string_view buf(read_buf_.data(), read_buf_.size());
     if (!request_.parse(buf)) {
+        DEBUG_LOG("parse failed fd=%d buf=%.*s...",
+                  fd_,
+                  static_cast<int>(read_buf_.size() < 80 ? read_buf_.size() : 80),
+                  read_buf_.data());
         response_.set_status(HttpResponse::Status::BAD_REQUEST);
         response_.set_body(HttpResponse::error_body(HttpResponse::Status::BAD_REQUEST));
         response_.set_keep_alive(false);
@@ -238,6 +250,12 @@ Connection::Want Connection::do_parse() noexcept
         return Want::WRITE;
     }
 
+    DEBUG_LOG("fd=%d method=%.*s path=%.*s",
+              fd_,
+              static_cast<int>(request_.method_str().size()),
+              request_.method_str().data(),
+              static_cast<int>(request_.path().size()),
+              request_.path().data());
     // 解析成功 —— 事件循环将调用 prepare_response 构建响应
     return Want::NONE;
 }
@@ -293,6 +311,7 @@ Connection::Want Connection::do_send_headers() noexcept
     header_sent_ += static_cast<size_t>(n);
 
     if (header_sent_ >= header_buf_.size()) {
+        DEBUG_LOG("headers done fd=%d, total=%zu", fd_, header_buf_.size());
         // 头部发送完成
         if (is_head_ || !response_.has_body()) {
             // HEAD 方法或没有 body → 当前请求完成
@@ -342,6 +361,7 @@ void Connection::set_send_file(int fd, off_t size, off_t start,
 Connection::Want Connection::do_send_body_plain() noexcept
 {
     if (send_remaining_ <= 0) {
+        DEBUG_LOG("body done fd=%d", fd_);
         state_ = State::KEEP_ALIVE;
         if (file_fd_ >= 0) { ::close(file_fd_); file_fd_ = -1; }
         return Want::READ;
@@ -351,6 +371,7 @@ Connection::Want Connection::do_send_body_plain() noexcept
     int ret = ::sendfile(file_fd_, fd_, send_offset_, &remaining, nullptr, 0);
 
     if (ret == 0) {
+        DEBUG_LOG("sendfile done fd=%d offset=%lld", fd_, (long long)send_offset_);
         // 全部字节已发送
         send_remaining_ = 0;
         state_ = State::KEEP_ALIVE;
@@ -361,6 +382,10 @@ Connection::Want Connection::do_send_body_plain() noexcept
     if (ret == -1 && errno == EAGAIN) {
         send_offset_ += remaining;
         send_remaining_ -= remaining;
+        DEBUG_LOG("sendfile partial fd=%d sent=%lld remaining=%lld",
+                  fd_,
+                  (long long)(send_remaining_ - remaining),
+                  (long long)send_remaining_);
         return Want::WRITE;
     }
 
@@ -427,6 +452,8 @@ Connection::Want Connection::do_send_body_tls() noexcept
         // 当前 chunk 完全发送，更新文件偏移
         send_offset_ += static_cast<off_t>(chunk_used_);
         send_remaining_ -= static_cast<off_t>(chunk_used_);
+        DEBUG_LOG("TLS chunk done fd=%d remaining=%lld",
+                  fd_, (long long)send_remaining_);
     }
 
     return Want::WRITE;

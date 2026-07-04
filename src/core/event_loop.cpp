@@ -1,5 +1,6 @@
 #include "event_loop.h"
 
+#include "debug_log.h"
 #include "http/http_response.h"
 
 #include <cerrno>
@@ -20,11 +21,13 @@ EventLoop::EventLoop(std::string root_dir, int keep_alive_timeout) noexcept
     , keep_alive_timeout_(keep_alive_timeout)
 {
     kq_ = kqueue();
+    DEBUG_LOG("kq=%d", kq_);
 }
 
 /// 析构：关闭 kqueue 文件描述符
 EventLoop::~EventLoop() noexcept
 {
+    DEBUG_LOG("close kq=%d", kq_);
     if (kq_ >= 0) ::close(kq_);
 }
 
@@ -51,6 +54,7 @@ void EventLoop::add_event(uintptr_t ident, int16_t filter, uint16_t flags,
 void EventLoop::flush_changelist() noexcept
 {
     if (changelist_.empty()) return;
+    DEBUG_LOG("submit %zu changes", changelist_.size());
     kevent(kq_, changelist_.data(), static_cast<int>(changelist_.size()),
            nullptr, 0, nullptr);
     changelist_.clear();
@@ -71,6 +75,8 @@ void EventLoop::add_listener(int fd) noexcept
     // 设为非阻塞模式
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    DEBUG_LOG("listen_fd=%d ka_timeout=%d", fd, keep_alive_timeout_);
 
     // 注册监听 socket 的读事件（新连接到达时触发）
     add_event(static_cast<uintptr_t>(fd), EVFILT_READ, EV_ADD | EV_ENABLE,
@@ -98,6 +104,8 @@ void EventLoop::add_listener(int fd) noexcept
  */
 void EventLoop::run() noexcept
 {
+    DEBUG_LOG("event loop started");
+
     // 忽略 SIGPIPE（写入已关闭的 socket 时避免进程被终止）
     signal(SIGPIPE, SIG_IGN);
 
@@ -121,9 +129,12 @@ void EventLoop::run() noexcept
             break;                          // 其他错误，退出
         }
 
+        DEBUG_LOG("kevent returned %d events", n);
         for (int i = 0; i < n; ++i)
             dispatch(events_[i]);
     }
+
+    DEBUG_LOG("event loop stopped");
 }
 
 /**
@@ -141,6 +152,7 @@ void EventLoop::run() noexcept
 void EventLoop::dispatch(const struct kevent& ev) noexcept
 {
     if (ev.flags & EV_ERROR) {
+        DEBUG_LOG("EV_ERROR ident=%lu filter=%d", ev.ident, ev.filter);
         // fd 上的错误事件 —— 关闭对应连接
         if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_) {
             auto* conn = static_cast<Connection*>(ev.udata);
@@ -153,12 +165,14 @@ void EventLoop::dispatch(const struct kevent& ev) noexcept
         // 对端关闭连接
         if (ev.udata != &listener_tag_ && ev.udata != &timer_tag_) {
             auto* conn = static_cast<Connection*>(ev.udata);
+            DEBUG_LOG("EV_EOF conn=%p fd=%d", (void*)conn, conn->fd());
             destroy_connection(conn);
         }
         return;
     }
 
     if (ev.udata == &listener_tag_) {
+        DEBUG_LOG("listener event");
         handle_accept();
     } else if (ev.udata == &timer_tag_) {
         handle_timer();
@@ -178,6 +192,7 @@ void EventLoop::dispatch(const struct kevent& ev) noexcept
  */
 void EventLoop::handle_accept() noexcept
 {
+    int accepted = 0;
     for (;;) {
         struct sockaddr_in addr;
         socklen_t addrlen = sizeof(addr);
@@ -190,6 +205,7 @@ void EventLoop::handle_accept() noexcept
                 break; // 所有等待的连接已处理完毕
             break;
         }
+        ++accepted;
 
         // 设为非阻塞，并关闭 Nagle 算法以降低延迟
         int flags = fcntl(fd, F_GETFL, 0);
@@ -199,10 +215,13 @@ void EventLoop::handle_accept() noexcept
 
         auto* conn = create_connection(fd);
         if (!conn) {
+            DEBUG_LOG("connection pool full, close fd=%d", fd);
             ::close(fd);
             break; // 连接池已满，停止接受
         }
     }
+    DEBUG_LOG_IF(accepted > 0, "accepted %d connections, active=%zu",
+                 accepted, pool_.active_count());
 }
 
 /**
@@ -213,14 +232,19 @@ void EventLoop::handle_accept() noexcept
 void EventLoop::handle_timer() noexcept
 {
     auto timeout = std::chrono::seconds(keep_alive_timeout_);
+    int expired = 0;
 
     for (auto& conn : pool_) {
         if (conn.state() == Connection::State::KEEP_ALIVE &&
             conn.is_expired(timeout))
         {
+            ++expired;
             destroy_connection(&conn);
         }
     }
+
+    DEBUG_LOG_IF(expired > 0, "expired %d keep-alive connections, active=%zu",
+                 expired, pool_.active_count());
 }
 
 /**
@@ -286,6 +310,10 @@ void EventLoop::process_connection(Connection* conn) noexcept
         break;
     }
 
+    DEBUG_LOG("state=%d want=%d fd=%d",
+              static_cast<int>(conn->state()),
+              static_cast<int>(want), conn->fd());
+
     if (conn->is_closed()) {
         destroy_connection(conn);
         return;
@@ -295,6 +323,7 @@ void EventLoop::process_connection(Connection* conn) noexcept
     if (conn->state() == Connection::State::PARSING &&
         conn->request().method() == HttpRequest::Method::UNKNOWN)
     {
+        DEBUG_LOG("inline parse fd=%d", conn->fd());
         want = conn->do_parse();
     }
 
@@ -303,6 +332,10 @@ void EventLoop::process_connection(Connection* conn) noexcept
          conn->state() == Connection::State::READING) &&
         conn->request().method() != HttpRequest::Method::UNKNOWN)
     {
+        DEBUG_LOG("prepare response fd=%d path=%.*s",
+                  conn->fd(),
+                  static_cast<int>(conn->request().path().size()),
+                  conn->request().path().data());
         prepare_response(conn);
         want = conn->do_send_headers();
     }
@@ -336,6 +369,10 @@ void EventLoop::prepare_response(Connection* conn) noexcept
     if (req.method() != HttpRequest::Method::GET &&
         req.method() != HttpRequest::Method::HEAD)
     {
+        DEBUG_LOG("unsupported method fd=%d method=%.*s",
+                  conn->fd(),
+                  static_cast<int>(req.method_str().size()),
+                  req.method_str().data());
         resp.set_status(HttpResponse::Status::NOT_IMPLEMENTED);
         auto body = HttpResponse::error_body(HttpResponse::Status::NOT_IMPLEMENTED);
         resp.set_body(std::move(body));
@@ -355,6 +392,9 @@ void EventLoop::prepare_response(Connection* conn) noexcept
         case FileError::BAD_REQUEST: st = HttpResponse::Status::BAD_REQUEST; break;
         default:                     st = HttpResponse::Status::INTERNAL_ERROR; break;
         }
+        DEBUG_LOG("file error fd=%d err=%d status=%d",
+                  conn->fd(), static_cast<int>(*err),
+                  static_cast<int>(st));
         resp.set_status(st);
         auto body = HttpResponse::error_body(st);
         resp.set_body(std::move(body));
@@ -369,6 +409,7 @@ void EventLoop::prepare_response(Connection* conn) noexcept
     // 检查 If-Modified-Since 条件请求
     auto ims = req.parse_if_modified_since();
     if (ims && *ims >= info.last_modified) {
+        DEBUG_LOG("304 fd=%d", conn->fd());
         resp.set_status(HttpResponse::Status::NOT_MODIFIED);
         resp.set_last_modified(info.last_modified);
         conn->prepare_headers();
@@ -393,6 +434,12 @@ void EventLoop::prepare_response(Connection* conn) noexcept
     }
 
     off_t content_length = (info.size > 0) ? (range_end - range_start + 1) : 0;
+
+    DEBUG_LOG("response fd=%d status=%d content_length=%lld file=%s",
+              conn->fd(),
+              range ? 206 : 200,
+              (long long)content_length,
+              info.resolved_path.c_str());
 
     resp.set_status(range ? HttpResponse::Status::PARTIAL_CONTENT
                           : HttpResponse::Status::OK);
@@ -455,7 +502,10 @@ void EventLoop::update_events(Connection* conn, Connection::Want want) noexcept
 Connection* EventLoop::create_connection(int fd) noexcept
 {
     auto* conn = pool_.acquire();
-    if (!conn) return nullptr;
+    if (!conn) {
+        DEBUG_LOG("pool full, fd=%d", fd);
+        return nullptr;
+    }
 
     SSL* ssl = nullptr;
     if (tls_ctx_) {
@@ -465,6 +515,8 @@ Connection* EventLoop::create_connection(int fd) noexcept
     }
 
     conn->init(fd, ssl, file_server_.root_dir(), keep_alive_timeout_);
+
+    DEBUG_LOG("fd=%d conn=%p tls=%s", fd, (void*)conn, ssl ? "yes" : "no");
 
     // 注册读事件以接收 HTTP 请求数据
     add_event(static_cast<uintptr_t>(fd), EVFILT_READ,
@@ -484,6 +536,8 @@ Connection* EventLoop::create_connection(int fd) noexcept
 void EventLoop::destroy_connection(Connection* conn) noexcept
 {
     int fd = conn->fd();
+    DEBUG_LOG("fd=%d conn=%p state=%d", fd, (void*)conn,
+              static_cast<int>(conn->state()));
     if (fd >= 0) {
         // 从 kqueue 中移除所有事件监听
         add_event(static_cast<uintptr_t>(fd), EVFILT_READ,

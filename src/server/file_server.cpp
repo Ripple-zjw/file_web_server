@@ -1,5 +1,6 @@
 #include "file_server.h"
 
+#include "core/debug_log.h"
 #include "http/mime_types.h"
 
 #include <algorithm>
@@ -26,6 +27,7 @@ FileServer::FileServer(std::string root_dir) noexcept
     } else {
         root_dir_ = std::move(root_dir);
     }
+    DEBUG_LOG("root=%s", root_dir_.c_str());
 }
 
 /**
@@ -143,6 +145,9 @@ FileResult FileServer::open(std::string_view request_path) noexcept
         return FileError::BAD_REQUEST;
 
     auto full_path = root_dir_ + normalized;
+    DEBUG_LOG("request_path=%.*s normalized=%s full_path=%s",
+              static_cast<int>(request_path.size()), request_path.data(),
+              normalized.c_str(), full_path.c_str());
 
     struct stat st;
     if (::lstat(full_path.c_str(), &st) != 0)
@@ -154,6 +159,7 @@ FileResult FileServer::open(std::string_view request_path) noexcept
         if (!real) return FileError::FORBIDDEN;
         std::string resolved(real);
         std::free(real);
+        DEBUG_LOG("symlink resolved=%s", resolved.c_str());
         if (!is_within_root(resolved, root_dir_))
             return FileError::FORBIDDEN;
         if (::stat(full_path.c_str(), &st) != 0)
@@ -181,6 +187,9 @@ FileResult FileServer::open(std::string_view request_path) noexcept
         return FileError::NOT_FOUND;
 
     auto mime = detect_mime_type(full_path);
+    DEBUG_LOG("fd=%d size=%lld mime=%.*s", fd,
+              (long long)st.st_size,
+              static_cast<int>(mime.size()), mime.data());
 
     return FileInfo{
         fd,

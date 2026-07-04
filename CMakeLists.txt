@@ -16,6 +16,11 @@ target_link_libraries(web_server PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_options(web_server PRIVATE -O3 -flto -DNDEBUG)
     target_link_options(web_server PRIVATE -flto)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(web_server PRIVATE -O0 -g)
+else()
+    # 默认（未指定构建类型）视为 Debug
+    target_compile_options(web_server PRIVATE -O0 -g)
 endif()
 
 target_compile_options(web_server PRIVATE -Wall -Wextra -Wpedantic)

@@ -1,3 +1,4 @@
+#include "core/debug_log.h"
 #include "core/event_loop.h"
 #include "core/tls_context.h"
 #include "server/cli.h"
@@ -71,6 +72,8 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    DEBUG_LOG("port=%u root=%s", cfg.port, cfg.root_dir.c_str());
+
     // 创建监听 socket
     int listen_fd = create_listener(cfg.port);
     if (listen_fd < 0)
@@ -82,6 +85,8 @@ int main(int argc, char* argv[])
     // 可选 TLS —— 若同时提供证书和密钥则启用
     TlsContext tls_ctx;
     if (cfg.cert_file && cfg.key_file) {
+        DEBUG_LOG("loading cert=%s key=%s",
+                  cfg.cert_file->c_str(), cfg.key_file->c_str());
         if (!tls_ctx.load_certificate(*cfg.cert_file, *cfg.key_file)) {
             std::fprintf(stderr, "error: failed to load TLS certificate\n");
             ::close(listen_fd);
@@ -92,6 +97,7 @@ int main(int argc, char* argv[])
     }
 
     // 创建并运行事件循环
+    DEBUG_LOG("starting event loop");
     EventLoop loop(cfg.root_dir, cfg.keep_alive_timeout);
     if (tls_ctx)
         loop.set_tls_context(&tls_ctx);
@@ -102,5 +108,6 @@ int main(int argc, char* argv[])
     // 清理：关闭监听 socket（事件循环退出后 fd 仍需手动关闭）
     ::close(listen_fd);
     std::printf("\nServer shut down.\n");
+    DEBUG_LOG("server exited");
     return 0;
 }
