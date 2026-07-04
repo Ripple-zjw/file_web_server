@@ -85,6 +85,7 @@ public:
         if (!SSL_CTX_check_private_key(ctx_))
             return false;
 
+        loaded_ = true;
         return true;
     }
 
@@ -102,9 +103,10 @@ public:
 
     /// @return 底层的 SSL_CTX 指针，用于直接调用 OpenSSL API
     SSL_CTX* native() const noexcept { return ctx_; }
-    /// @return true 表示 TLS 上下文已成功初始化，可以用于创建连接
-    explicit operator bool() const noexcept { return ctx_ != nullptr; }
+    /// @return true 表示 TLS 上下文已加载了有效的证书，可以用于创建连接
+    explicit operator bool() const noexcept { return loaded_; }
 
 private:
     SSL_CTX* ctx_ = nullptr;
+    bool loaded_ = false;
 };
