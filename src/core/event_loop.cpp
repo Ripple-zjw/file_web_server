@@ -382,6 +382,14 @@ void EventLoop::prepare_response(Connection* conn) noexcept
         resp.set_content_type("text/html; charset=utf-8");
         resp.set_content_length(resp.body().size());
         conn->prepare_headers();
+        DEBUG_LOG("=> %d %.*s %.*s body=%.*s",
+                  static_cast<int>(resp.status()),
+                  static_cast<int>(req.method_str().size()),
+                  req.method_str().data(),
+                  static_cast<int>(req.path().size()),
+                  req.path().data(),
+                  static_cast<int>(resp.body().size() < 256 ? resp.body().size() : 256),
+                  resp.body().data());
         return;
     }
 
@@ -404,6 +412,14 @@ void EventLoop::prepare_response(Connection* conn) noexcept
         resp.set_content_type("text/html; charset=utf-8");
         resp.set_content_length(resp.body().size());
         conn->prepare_headers();
+        DEBUG_LOG("=> %d %.*s %.*s body=%.*s",
+                  static_cast<int>(resp.status()),
+                  static_cast<int>(req.method_str().size()),
+                  req.method_str().data(),
+                  static_cast<int>(req.path().size()),
+                  req.path().data(),
+                  static_cast<int>(resp.body().size() < 256 ? resp.body().size() : 256),
+                  resp.body().data());
         return;
     }
 
@@ -417,6 +433,13 @@ void EventLoop::prepare_response(Connection* conn) noexcept
         resp.set_last_modified(info.last_modified);
         conn->prepare_headers();
         // info 析构时自动关闭 fd
+        DEBUG_LOG("=> %d %.*s %.*s file=%s",
+                  static_cast<int>(resp.status()),
+                  static_cast<int>(req.method_str().size()),
+                  req.method_str().data(),
+                  static_cast<int>(req.path().size()),
+                  req.path().data(),
+                  info.resolved_path.c_str());
         return;
     }
 
@@ -438,14 +461,16 @@ void EventLoop::prepare_response(Connection* conn) noexcept
 
     off_t content_length = (info.size > 0) ? (range_end - range_start + 1) : 0;
 
-    DEBUG_LOG("response fd=%d status=%d content_length=%lld file=%s",
-              conn->fd(),
-              range ? 206 : 200,
-              (long long)content_length,
-              info.resolved_path.c_str());
-
     resp.set_status(range ? HttpResponse::Status::PARTIAL_CONTENT
                           : HttpResponse::Status::OK);
+    DEBUG_LOG("=> %d %.*s %.*s file=%s len=%lld",
+              static_cast<int>(resp.status()),
+              static_cast<int>(req.method_str().size()),
+              req.method_str().data(),
+              static_cast<int>(req.path().size()),
+              req.path().data(),
+              info.resolved_path.c_str(),
+              (long long)content_length);
     resp.set_content_type(info.mime_type);
     resp.set_content_length(static_cast<uint64_t>(content_length));
     resp.set_last_modified(info.last_modified);
