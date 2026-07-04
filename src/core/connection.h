@@ -141,6 +141,9 @@ private:
     size_t chunk_used_ = 0;           ///< chunk_buf_ 中有效数据的字节数
     size_t chunk_sent_ = 0;           ///< chunk_buf_ 中已通过 SSL_write 发送的字节数
 
+    // ---- 内存 body 发送（错误页面等） ----
+    size_t body_sent_ = 0;            ///< response_.body() 中已发送的字节数
+
     // ---- 请求/响应 ----
     HttpRequest  request_;
     HttpResponse response_;

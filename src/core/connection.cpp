@@ -42,7 +42,10 @@ void Connection::init(int fd, SSL* ssl, std::string root_dir,
     chunk_used_ = 0;
     chunk_sent_ = 0;
     is_head_ = false;
+    body_sent_ = 0;
     read_buf_.clear();
+    request_.reset();
+    response_.reset();
     DEBUG_LOG("fd=%d tls=%d", fd, ssl ? 1 : 0);
 }
 
@@ -66,6 +69,7 @@ void Connection::reset() noexcept
     send_offset_ = 0;
     send_remaining_ = 0;
     chunk_used_ = 0;
+    body_sent_ = 0;
     chunk_sent_ = 0;
     is_head_ = false;
 
@@ -461,12 +465,57 @@ Connection::Want Connection::do_send_body_tls() noexcept
 }
 
 /**
- * @brief 响应体发送入口 —— 根据是否 TLS 路由到对应实现。
+ * @brief 响应体发送入口 —— 路由到对应实现。
+ *
+ * 三种路径：
+ * 1. TLS → do_send_body_tls（分块 pread + SSL_write）
+ * 2. 非 TLS + 有文件 → do_send_body_plain（sendfile 零拷贝）
+ * 3. 有内存 body（错误页面）→ 直接 write/SSL_write
  *
  * @return 下一步应关注的事件方向
  */
 Connection::Want Connection::do_send_body() noexcept
 {
+    // 内存 body（错误页面等非文件响应）
+    if (file_fd_ < 0 && response_.has_body()) {
+        auto body = response_.body();
+        auto remaining = body.size() - body_sent_;
+        if (remaining <= 0) {
+            state_ = State::KEEP_ALIVE;
+            return Want::READ;
+        }
+        auto ptr = body.data() + body_sent_;
+
+        ssize_t n;
+        if (ssl_) {
+            ERR_clear_error();
+            n = SSL_write(ssl_, ptr, static_cast<int>(remaining));
+            if (n <= 0) {
+                int err = SSL_get_error(ssl_, static_cast<int>(n));
+                if (err == SSL_ERROR_WANT_WRITE) return Want::WRITE;
+                if (err == SSL_ERROR_WANT_READ)  return Want::READ;
+                close();
+                return Want::NONE;
+            }
+        } else {
+            n = ::write(fd_, ptr, remaining);
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return Want::WRITE;
+                close();
+                return Want::NONE;
+            }
+        }
+
+        body_sent_ += static_cast<size_t>(n);
+        if (body_sent_ >= body.size()) {
+            DEBUG_LOG("string body done fd=%d written=%zu total=%zu",
+                      fd_, body_sent_, body.size());
+            state_ = State::KEEP_ALIVE;
+            return Want::READ;
+        }
+        return Want::WRITE;
+    }
+
     if (ssl_)
         return do_send_body_tls();
     return do_send_body_plain();
