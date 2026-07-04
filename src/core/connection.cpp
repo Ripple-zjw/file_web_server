@@ -42,6 +42,7 @@ void Connection::init(int fd, SSL* ssl, std::string root_dir,
     chunk_used_ = 0;
     chunk_sent_ = 0;
     is_head_ = false;
+    read_buf_.clear();
     DEBUG_LOG("fd=%d tls=%d", fd, ssl ? 1 : 0);
 }
 
