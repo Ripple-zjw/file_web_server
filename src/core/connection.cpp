@@ -313,7 +313,7 @@ Connection::Want Connection::do_send_headers() noexcept
     if (header_sent_ >= header_buf_.size()) {
         DEBUG_LOG("headers done fd=%d, total=%zu", fd_, header_buf_.size());
         // 头部发送完成
-        if (is_head_ || !response_.has_body()) {
+        if (is_head_ || (!response_.has_body() && file_fd_ < 0)) {
             // HEAD 方法或没有 body → 当前请求完成
             state_ = State::KEEP_ALIVE;
             return Want::READ;

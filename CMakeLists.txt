@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 默认 Debug 模式 + 生成 compile_commands.json（供 clangd 使用）
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(OpenSSL REQUIRED)
 
 file(GLOB_RECURSE SOURCES src/*.cpp)
