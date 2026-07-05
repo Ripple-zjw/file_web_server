@@ -3,12 +3,12 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Build & Run
+每次编译时都编译debug版本，并且要生成compile_commands.json
 
 ```sh
 # 构建
 cmake -S . -B build
 cmake --build build
-每次编译时都编译debug版本，并且要生成compile_commands.json
 
 # 运行
 ./build/web_server --root /path/to/serve --port 8080

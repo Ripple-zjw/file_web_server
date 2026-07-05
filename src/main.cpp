@@ -29,6 +29,7 @@ create_listener(uint16_t port) noexcept
         return -1;
     }
 
+    // SO_REUSEADDR 允许快速重启服务器（TIME_WAIT 状态下仍可绑定同一端口）
     int opt = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
