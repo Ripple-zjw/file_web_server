@@ -16,16 +16,19 @@
  * 连接按状态机流转，每个状态有对应的 do_*() 动作方法，
  * 返回 Want::{READ, WRITE, NONE} 告诉事件循环下一步关注什么事件。
  *
+ * 新连接先进入 PROTO_DETECT 状态，通过首字节判定协议：
+ * - 0x16（TLS ClientHello）→ 启用 TLS 并握手
+ * - 其他（HTTP 请求）→ 直接走明文
+ *
  * 支持 TLS（按需），非 TLS 下使用 sendfile 零拷贝发送文件体，
  * TLS 下回退到分块 pread + SSL_write 方案。
- *
- * @see read_buf_ 读缓冲区、header_buf_ 响应头缓冲区、file_fd_ 发送文件状态
  */
 class Connection {
 public:
     /// 连接状态
     enum class State : uint8_t {
         CLOSED,           ///< 已关闭，fd 被释放
+        PROTO_DETECT,     ///< 等待首字节以判定 TLS/HTTP 协议
         TLS_ACCEPT,       ///< 正在进行 TLS 握手
         READING,          ///< 等待/正在读取 HTTP 请求数据
         PARSING,          ///< 请求头已读完，待解析
@@ -46,16 +49,16 @@ public:
     Connection() = default;
 
     /**
-     * @brief 初始化（或重新初始化）连接，设置 fd、TLS 对象、根目录和超时参数。
+     * @brief 初始化（或重新初始化）连接，设置 fd、根目录和超时参数。
      *
-     * 初始状态：TLS 连接进入 TLS_ACCEPT，普通连接进入 READING。
+     * 初始状态始终为 PROTO_DETECT（协议由首字节判定），
+     * TLS 上下文由 EventLoop 在检测到 TLS ClientHello 后注入。
      *
      * @param fd          已 accept 的 socket 文件描述符
-     * @param ssl         SSL 对象（nullptr 表示不启用 TLS）
      * @param root_dir    文件服务根目录（用于 keep-alive 重置时的请求处理）
      * @param ka_timeout  Keep-Alive 超时秒数
      */
-    void init(int fd, SSL* ssl, std::string root_dir, int ka_timeout) noexcept;
+    void init(int fd, std::string root_dir, int ka_timeout) noexcept;
 
     /**
      * @brief 重置请求/响应数据，准备处理同一连接上的下一个请求。
@@ -69,6 +72,25 @@ public:
      * @brief 关闭连接：shutdown 并 close socket，释放 SSL 对象，关闭待发送的文件。
      */
     void close() noexcept;
+
+    // ---- 协议检测与 TLS ----
+
+    /**
+     * @brief 通过 recv(MSG_PEEK) 探测首字节，判定 TLS/HTTP 并转换状态。
+     *
+     * - 首字节 0x16（TLS Record）且 TLS 可用 → 状态转为 TLS_ACCEPT，事件循环后续注入 SSL
+     * - 首字节 0x16 但 TLS 不可用 → 构建 400 错误响应
+     * - 非 0x16 → 视为明文 HTTP，状态转为 READING
+     *
+     * @param tls_available 服务器是否配置了 TLS 证书
+     * @return 下一步应关注的事件方向
+     */
+    Want do_proto_detect(bool tls_available) noexcept;
+
+    /// 设置 TLS 可用标志（由 EventLoop 在 create_connection 后调用）
+    void set_tls_available(bool v) noexcept { tls_available_ = v; }
+    /// 注入 SSL 对象（EventLoop 检测到 TLS 后调用）
+    void set_ssl(SSL* ssl) noexcept { ssl_ = ssl; }
 
     // ---- 状态机动作方法 ----
 
@@ -121,6 +143,7 @@ private:
     int     fd_ = -1;
     State   state_ = State::CLOSED;
     SSL*    ssl_ = nullptr;
+    bool    tls_available_ = false;    ///< 服务器是否支持 TLS（由 EventLoop 设置）
 
     // ---- 读缓冲区 ----
     std::vector<char> read_buf_;      ///< 累积已读取的原始 HTTP 字节

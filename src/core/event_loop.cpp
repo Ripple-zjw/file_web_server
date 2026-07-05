@@ -283,6 +283,10 @@ void EventLoop::process_connection(Connection* conn) noexcept
     Connection::Want want = Connection::Want::NONE;
 
     switch (conn->state()) {
+    case Connection::State::PROTO_DETECT:
+        want = conn->do_proto_detect(tls_ctx_ != nullptr);
+        break;
+
     case Connection::State::TLS_ACCEPT:
         want = conn->do_tls_accept();
         break;
@@ -311,6 +315,16 @@ void EventLoop::process_connection(Connection* conn) noexcept
 
     default:
         break;
+    }
+
+    // PROTO_DETECT 检测到 TLS → 注入 SSL 并立即执行握手
+    if (conn->state() == Connection::State::TLS_ACCEPT && !conn->is_tls()) {
+        SSL* ssl = tls_ctx_ ? tls_ctx_->new_ssl() : nullptr;
+        if (ssl) {
+            SSL_set_fd(ssl, conn->fd());
+            conn->set_ssl(ssl);
+        }
+        want = conn->do_tls_accept();
     }
 
     DEBUG_LOG("state=%d want=%d fd=%d",
@@ -535,16 +549,10 @@ Connection* EventLoop::create_connection(int fd) noexcept
         return nullptr;
     }
 
-    SSL* ssl = nullptr;
-    if (tls_ctx_) {
-        ssl = tls_ctx_->new_ssl();
-        if (ssl)
-            SSL_set_fd(ssl, fd);
-    }
+    conn->init(fd, file_server_.root_dir(), keep_alive_timeout_);
+    conn->set_tls_available(tls_ctx_ != nullptr);
 
-    conn->init(fd, ssl, file_server_.root_dir(), keep_alive_timeout_);
-
-    DEBUG_LOG("fd=%d conn=%p tls=%s", fd, (void*)conn, ssl ? "yes" : "no");
+    DEBUG_LOG("fd=%d conn=%p", fd, (void*)conn);
 
     // 注册读事件以接收 HTTP 请求数据
     add_event(static_cast<uintptr_t>(fd), EVFILT_READ,

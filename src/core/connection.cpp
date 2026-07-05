@@ -14,24 +14,24 @@
 // ============================================================================
 
 /**
- * @brief 初始化连接 —— 设置 fd、TLS 对象、根目录和超时参数。
+ * @brief 初始化连接 —— 设置 fd、根目录和超时参数，进入 PROTO_DETECT 状态。
  *
- * 初始状态：提供 SSL 对象时进入 TLS_ACCEPT，否则进入 READING。
- * 重置所有内部计数器、缓冲区偏移和文件发送状态。
+ * 初始状态始终为 PROTO_DETECT，通过 recv(MSG_PEEK) 检测首字节判定协议：
+ * TLS（0x16）或 HTTP。SSL 对象由 EventLoop 在判定后注入。
  *
  * @param fd          已 accept 的 socket fd
- * @param ssl         SSL 对象（nullptr 表示不启用 TLS）
  * @param root_dir    文件服务根目录
  * @param ka_timeout  Keep-Alive 超时秒数
  */
-void Connection::init(int fd, SSL* ssl, std::string root_dir,
+void Connection::init(int fd, std::string root_dir,
                       int ka_timeout) noexcept
 {
     fd_ = fd;
-    ssl_ = ssl;
+    ssl_ = nullptr;
+    tls_available_ = false;
     root_dir_ = std::move(root_dir);
     keep_alive_timeout_ = ka_timeout;
-    state_ = ssl ? State::TLS_ACCEPT : State::READING;
+    state_ = State::PROTO_DETECT;
     last_active_ = Clock::now();
     headers_complete_ = false;
     header_sent_ = 0;
@@ -41,19 +41,20 @@ void Connection::init(int fd, SSL* ssl, std::string root_dir,
     send_remaining_ = 0;
     chunk_used_ = 0;
     chunk_sent_ = 0;
-    is_head_ = false;
     body_sent_ = 0;
+    is_head_ = false;
     read_buf_.clear();
     request_.reset();
     response_.reset();
-    DEBUG_LOG("fd=%d tls=%d", fd, ssl ? 1 : 0);
+    DEBUG_LOG("fd=%d", fd);
 }
 
 /**
  * @brief 重置连接以处理同一 socket 上的下一个请求。
  *
  * 清空请求/响应对象、头部发送缓冲区、文件发送状态、读缓冲区。
- * 注意：不重置 last_active_（它应由下次 I/O 自动更新）。
+ * 注意：不重置 ssl_、tls_available_（连接协议已经确定），
+ * 也不重置 last_active_（它应由下次 I/O 自动更新）。
  */
 void Connection::reset() noexcept
 {
@@ -108,6 +109,66 @@ void Connection::close() noexcept
     }
 
     state_ = State::CLOSED;
+}
+
+// ============================================================================
+// 协议检测（TLS vs HTTP）
+// ============================================================================
+
+/**
+ * @brief 通过 recv(MSG_PEEK) 探测首字节，判定 TLS/HTTP 并转换状态。
+ *
+ * TLS ClientHello 的首字节固定为 0x16（Handshake Content Type），
+ * HTTP 请求首字节通常是 'G'/'H'/'P'/'D' 等可见 ASCII。
+ *
+ * 判定结果：
+ * - 0x16 且 tls_available → 状态转为 TLS_ACCEPT，返回 Want::NONE
+ *   （EventLoop 在 switch 后注入 SSL 并调用 do_tls_accept）
+ * - 0x16 但 !tls_available → 构建 "TLS not available" 响应并关闭
+ * - 非 0x16 → 视为明文 HTTP，转为 READING，返回 Want::READ
+ *
+ * @param tls_available 服务器是否配置了 TLS 证书
+ * @return 下一步应关注的事件方向
+ */
+Connection::Want Connection::do_proto_detect(bool tls_available) noexcept
+{
+    char buf[1];
+    ssize_t n = ::recv(fd_, buf, 1, MSG_PEEK);
+    if (n <= 0) {
+        if (n == 0) { close(); return Want::NONE; }
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return Want::READ;
+        close();
+        return Want::NONE;
+    }
+
+    bool is_tls = (static_cast<unsigned char>(buf[0]) == 0x16);
+    DEBUG_LOG("fd=%d proto=%s", fd_, is_tls ? "TLS" : "HTTP");
+
+    if (is_tls) {
+        if (!tls_available) {
+            DEBUG_LOG("TLS not available fd=%d", fd_);
+            // 服务器未配置 TLS，返回错误后关闭
+            response_.set_status(HttpResponse::Status::BAD_REQUEST);
+            auto body = HttpResponse::error_body(HttpResponse::Status::BAD_REQUEST);
+            body += "\n(Server does not support HTTPS/TLS)";
+            response_.set_body(std::move(body));
+            response_.set_keep_alive(false);
+            response_.set_content_type("text/html; charset=utf-8");
+            response_.set_content_length(response_.body().size());
+            prepare_headers();
+            state_ = State::SENDING_HEADERS;
+            return Want::WRITE;
+        }
+        // TLS 已配置 —— 转入 TLS_ACCEPT，EventLoop 随后注入 SSL 并握手
+        state_ = State::TLS_ACCEPT;
+        return Want::NONE;
+    }
+
+    // 明文 HTTP
+    last_active_ = Clock::now();
+    state_ = State::READING;
+    return Want::READ;
 }
 
 // ============================================================================
@@ -318,6 +379,8 @@ Connection::Want Connection::do_send_headers() noexcept
     if (header_sent_ >= header_buf_.size()) {
         DEBUG_LOG("headers done fd=%d, total=%zu", fd_, header_buf_.size());
         // 头部发送完成
+        // has_body() 只检查 body_ 字符串（用于错误页面），文件体通过
+        // set_send_file(file_fd_, send_remaining_) 传递，需额外判断
         if (is_head_ || (!response_.has_body() && file_fd_ < 0)) {
             // HEAD 方法或没有 body → 当前请求完成
             state_ = State::KEEP_ALIVE;
@@ -468,9 +531,9 @@ Connection::Want Connection::do_send_body_tls() noexcept
  * @brief 响应体发送入口 —— 路由到对应实现。
  *
  * 三种路径：
- * 1. TLS → do_send_body_tls（分块 pread + SSL_write）
- * 2. 非 TLS + 有文件 → do_send_body_plain（sendfile 零拷贝）
- * 3. 有内存 body（错误页面）→ 直接 write/SSL_write
+ * 1. 内存 body（错误页面）→ 直接 write/SSL_write
+ * 2. TLS → do_send_body_tls（分块 pread + SSL_write）
+ * 3. 非 TLS + 有文件 → do_send_body_plain（sendfile 零拷贝）
  *
  * @return 下一步应关注的事件方向
  */
