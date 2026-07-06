@@ -391,6 +391,9 @@ void EventLoop::prepare_response(Connection* conn) noexcept
     bool keep_alive = req.is_keep_alive();
     resp.set_keep_alive(keep_alive);
 
+    bool is_head = (req.method() == HttpRequest::Method::HEAD);
+    conn->set_is_head(is_head);
+
     // 验证方法 —— 仅支持 GET 和 HEAD
     if (req.method() != HttpRequest::Method::GET &&
         req.method() != HttpRequest::Method::HEAD)
@@ -501,8 +504,7 @@ void EventLoop::prepare_response(Connection* conn) noexcept
 
     conn->prepare_headers();
     conn->set_send_file(info.release_fd(), info.size,
-                        range_start, range_end,
-                        req.method() == HttpRequest::Method::HEAD);
+                        range_start, range_end, is_head);
 }
 
 /**

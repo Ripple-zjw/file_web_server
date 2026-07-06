@@ -1,6 +1,7 @@
 #include "core/debug_log.h"
 #include "core/event_loop.h"
 #include "core/tls_context.h"
+#include "core/version.h"
 #include "server/cli.h"
 
 #include <cstdio>
@@ -67,6 +68,11 @@ int main(int argc, char* argv[])
 {
     auto cfg = parse_args(
         std::span(argv, static_cast<size_t>(argc)));
+
+    if (cfg.version) {
+        std::puts(WEB_SERVER_VERSION_STR);
+        return 0;
+    }
 
     if (cfg.help) {
         print_help(argv[0]);

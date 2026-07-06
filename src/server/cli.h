@@ -16,6 +16,7 @@ struct ServerConfig {
     std::optional<std::string> key_file;     ///< TLS 私钥文件路径
     int keep_alive_timeout = 75;             ///< Keep-Alive 超时秒数
     bool help = false;                       ///< 是否显示帮助
+    bool version = false;                    ///< 是否显示版本号
 };
 
 /**
@@ -44,6 +45,11 @@ parse_args(std::span<char*> args) noexcept
 
         if (arg == "--help" || arg == "-h") {
             cfg.help = true;
+            continue;
+        }
+
+        if (arg == "--version") {
+            cfg.version = true;
             continue;
         }
 
@@ -101,5 +107,6 @@ inline void print_help(const char* prog) noexcept
               << "  --cert <file>    TLS certificate file (PEM)\n"
               << "  --key <file>     TLS private key file (PEM)\n"
               << "  --timeout <sec>  Keep-Alive timeout (default: 75)\n"
+              << "  --version        Show version\n"
               << "  --help, -h       Show this help\n";
 }

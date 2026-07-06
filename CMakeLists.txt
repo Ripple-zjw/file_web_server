@@ -13,7 +13,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(OpenSSL REQUIRED)
 
-file(GLOB_RECURSE SOURCES src/*.cpp)
+set(SOURCES
+    src/main.cpp
+    src/core/connection.cpp
+    src/core/event_loop.cpp
+    src/http/http_request.cpp
+    src/http/http_response.cpp
+    src/server/file_server.cpp
+)
 
 add_executable(web_server ${SOURCES})
 target_include_directories(web_server PRIVATE src)
@@ -30,3 +37,13 @@ else()
 endif()
 
 target_compile_options(web_server PRIVATE -Wall -Wextra -Wpedantic)
+
+# 测试
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    enable_testing()
+    add_test(
+        NAME smoke_test
+        COMMAND ${CMAKE_SOURCE_DIR}/tests/smoke_test.sh
+                $<TARGET_FILE:web_server> 19999
+    )
+endif()
