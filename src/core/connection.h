@@ -118,6 +118,9 @@ public:
      * @param end     发送结束偏移
      * @param is_head 是否仅发送头部（HEAD 方法）
      */
+    /// 设置为 HEAD 请求（仅发送头部，不发送响应体）
+    void set_is_head(bool v) noexcept { is_head_ = v; }
+
     void set_send_file(int fd, off_t size, off_t start, off_t end,
                        bool is_head) noexcept;
 
