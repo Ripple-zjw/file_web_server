@@ -16,11 +16,17 @@ jobs:
       - name: Install dependencies
         run: brew install openssl
 
-      - name: Configure
-        run: cmake -S . -B build
+      - name: Configure (Debug)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 
-      - name: Build
+      - name: Build (Debug)
         run: cmake --build build
+
+      - name: Configure (Release)
+        run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build build-release
 
       - name: Quick smoke test
         run: |
