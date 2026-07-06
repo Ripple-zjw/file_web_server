@@ -110,6 +110,15 @@ void EventLoop::run() noexcept
     signal(SIGPIPE, SIG_IGN);
 
     // 注册 SIGINT/SIGTERM 处理器，不使用 SA_RESTART 以让 kevent 返回 EINTR
+    /*
+     * 这段代码的作用是设置一个信号处理器，当程序收到 SIGINT 或 SIGTERM 信号时，会调用 handle_signal 函数，
+     * 将 g_running 设置为 false，从而让事件循环退出。
+     * 通过不使用 SA_RESTART 标志，kevent 调用在收到信号时会返回 EINTR，
+     * 这样我们就可以在下一次循环中检查 g_running 并安全地退出事件循环。 
+     * 为什么要做这个？因为我们希望在收到终止信号时能够立即退出事件循环，
+     * 而不是被阻塞在 kevent 调用中。通过不使用 SA_RESTART，
+     * kevent 会在信号到来时返回 EINTR，这样我们就可以检查 g_running 标志并安全地退出循环。
+     */
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_signal;

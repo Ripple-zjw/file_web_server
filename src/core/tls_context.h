@@ -24,17 +24,23 @@ public:
     {
         if (!ctx_) return;
 
+        // 设置最低 TLS 版本为 1.2，避免使用不安全的 SSLv2/SSLv3/TLSv1/TLSv1.1
         SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
 
+        // 启用部分写入和移动写缓冲区模式，适配非阻塞 I/O
+        // SSL_MODE_ENABLE_PARTIAL_WRITE：允许 SSL_write 只写入部分数据，返回值为实际写入的字节数
+        // SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER：允许 SSL_write 在非阻塞模式下移动写缓冲区，避免因缓冲区地址变化而导致错误
         SSL_CTX_set_mode(ctx_,
             SSL_MODE_ENABLE_PARTIAL_WRITE |
             SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
+        // 禁止压缩、禁止重协商时的会话恢复、服务端优先密码套件
         SSL_CTX_set_options(ctx_,
             SSL_OP_NO_COMPRESSION |
             SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION |
             SSL_OP_CIPHER_SERVER_PREFERENCE);
 
+        // 仅使用 HIGH 强度密码，排除匿名/空加密/MD5/PSK/SRP
         SSL_CTX_set_cipher_list(ctx_, "HIGH:!aNULL:!eNULL:!MD5:!PSK:!SRP");
     }
 
@@ -43,6 +49,7 @@ public:
         if (ctx_) SSL_CTX_free(ctx_);
     }
 
+    // 禁止拷贝构造和拷贝赋值
     TlsContext(const TlsContext&) = delete;
     TlsContext& operator=(const TlsContext&) = delete;
 
@@ -97,7 +104,7 @@ public:
         if (!ctx_) return nullptr;
         auto ssl = SSL_new(ctx_);
         if (!ssl) return nullptr;
-        SSL_set_accept_state(ssl);
+        SSL_set_accept_state(ssl);// 设置为服务器模式，等待客户端握手
         return ssl;
     }
 
