@@ -28,22 +28,5 @@ jobs:
       - name: Build (Release)
         run: cmake --build build-release
 
-      - name: Quick smoke test
-        run: |
-          # 启动服务器（后台）
-          ./build/web_server --root . --port 19999 &
-          SERVER_PID=$!
-          sleep 1
-
-          # 测试 HTTP 请求
-          HTTP_CODE=$(curl -o /dev/null -s -w "%{http_code}" http://127.0.0.1:19999/)
-          echo "HTTP status: $HTTP_CODE"
-          test "$HTTP_CODE" = "200" || test "$HTTP_CODE" = "404"
-
-          # 测试 HEAD 请求
-          HEAD_CODE=$(curl -o /dev/null -s -w "%{http_code}" -X HEAD http://127.0.0.1:19999/)
-          echo "HEAD status: $HEAD_CODE"
-          test "$HEAD_CODE" = "200" || test "$HEAD_CODE" = "404"
-
-          kill $SERVER_PID 2>/dev/null
-          echo "Smoke test passed"
+      - name: Smoke test
+        run: bash tests/smoke_test.sh ./build/web_server 19999
