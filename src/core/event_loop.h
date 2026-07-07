@@ -83,6 +83,9 @@ private:
     Pool pool_;                          ///< 连接对象池
     int keep_alive_timeout_ = 75;        ///< Keep-Alive 超时秒数
 
+    /// 侵入式 Keep-Alive 双向链表头（只包含处于 KEEP_ALIVE 状态的连接）
+    Connection* keepalive_head_ = nullptr;
+
     /// kqueue 的事件 udata 标记，用于区分事件来源
     char listener_tag_ = 'L';            ///< 监听 socket 事件的标识
     char timer_tag_    = 'T';            ///< 定时器事件的标识
@@ -178,4 +181,12 @@ private:
      * @param conn 要销毁的连接指针
      */
     void destroy_connection(Connection* conn) noexcept;
+
+    // ---- Keep-Alive 链表操作（O(1)，侵入式双向链表） ----
+
+    /// 将连接插入 keep-alive 链表头部（幂等：已在链表中则直接返回）
+    void add_to_keepalive_list(Connection* conn) noexcept;
+
+    /// 从 keep-alive 链表中移除连接（幂等：不在链表中则直接返回）
+    void remove_from_keepalive_list(Connection* conn) noexcept;
 };

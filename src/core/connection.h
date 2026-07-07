@@ -175,6 +175,12 @@ private:
     HttpResponse response_;
     bool is_head_ = false;            ///< 当前请求是否为 HEAD 方法（不发送响应体）
 
+    // ---- 侵入式 Keep-Alive 双向链表节点 ----
+    friend class EventLoop;           ///< EventLoop 直接操作链表指针
+    Connection* keepalive_prev_ = nullptr;
+    Connection* keepalive_next_ = nullptr;
+    bool in_keepalive_list_ = false;
+
     // ---- Keep-Alive ----
     Clock::time_point last_active_;   ///< 最后一次 I/O 活动的时间点
     int  keep_alive_timeout_ = 75;    ///< Keep-Alive 超时秒数

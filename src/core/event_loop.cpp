@@ -237,22 +237,25 @@ void EventLoop::handle_accept() noexcept
 }
 
 /**
- * @brief 处理定时器事件：扫描所有连接并清理过期的 keep-alive 连接。
+ * @brief 处理定时器事件：遍历 keep-alive 链表，关闭超时的连接。
  *
- * 只检查处于 KEEP_ALIVE 状态的连接，根据 last_active_ 时间戳判断是否超时。
+ * 只遍历处于 KEEP_ALIVE 状态的连接（已在链表中），
+ * 根据 last_active_ 时间戳判断是否超时。
+ * 使用侵入式链表避免扫描 16384 个池槽位。
  */
 void EventLoop::handle_timer() noexcept
 {
     auto timeout = std::chrono::seconds(keep_alive_timeout_);
     int expired = 0;
 
-    for (auto& conn : pool_) {
-        if (conn.state() == Connection::State::KEEP_ALIVE &&
-            conn.is_expired(timeout))
-        {
+    Connection* conn = keepalive_head_;
+    while (conn) {
+        Connection* next = conn->keepalive_next_; // 先存下个指针——destroy 后 conn 失效
+        if (conn->is_expired(timeout)) {
             ++expired;
-            destroy_connection(&conn);
+            destroy_connection(conn);
         }
+        conn = next;
     }
 
     DEBUG_LOG_IF(expired > 0, "expired %d keep-alive connections, active=%zu",
@@ -288,6 +291,9 @@ void EventLoop::handle_connection_event(Connection* conn,
 void EventLoop::process_connection(Connection* conn) noexcept
 {
     if (conn->is_closed()) return;
+
+    // 记录状态机入口状态，用于后续对比是否进出 KEEP_ALIVE
+    auto prev_state = conn->state();
 
     Connection::Want want = Connection::Want::NONE;
 
@@ -364,6 +370,15 @@ void EventLoop::process_connection(Connection* conn) noexcept
                   conn->request().path().data());
         prepare_response(conn);
         want = conn->do_send_headers();
+    }
+
+    // 对比状态机运行前后的状态，同步 Keep-Alive 链表
+    if (prev_state != Connection::State::KEEP_ALIVE &&
+        conn->state() == Connection::State::KEEP_ALIVE) {
+        add_to_keepalive_list(conn);
+    } else if (prev_state == Connection::State::KEEP_ALIVE &&
+               conn->state() != Connection::State::KEEP_ALIVE) {
+        remove_from_keepalive_list(conn);
     }
 
     update_events(conn, want);
@@ -572,6 +587,33 @@ Connection* EventLoop::create_connection(int fd) noexcept
     return conn;
 }
 
+// ---- Keep-Alive 链表操作实现 ----
+
+void EventLoop::add_to_keepalive_list(Connection* conn) noexcept
+{
+    if (conn->in_keepalive_list_) return; // 已在链表中
+    conn->in_keepalive_list_ = true;
+    conn->keepalive_prev_ = nullptr;
+    conn->keepalive_next_ = keepalive_head_;
+    if (keepalive_head_)
+        keepalive_head_->keepalive_prev_ = conn;
+    keepalive_head_ = conn;
+}
+
+void EventLoop::remove_from_keepalive_list(Connection* conn) noexcept
+{
+    if (!conn->in_keepalive_list_) return; // 不在链表中
+    conn->in_keepalive_list_ = false;
+    if (conn->keepalive_prev_)
+        conn->keepalive_prev_->keepalive_next_ = conn->keepalive_next_;
+    else
+        keepalive_head_ = conn->keepalive_next_;
+    if (conn->keepalive_next_)
+        conn->keepalive_next_->keepalive_prev_ = conn->keepalive_prev_;
+    conn->keepalive_prev_ = nullptr;
+    conn->keepalive_next_ = nullptr;
+}
+
 /**
  * @brief 销毁连接：从 kqueue 移除事件 → 关闭 fd/TLS/文件 → 归还连接池槽位。
  *
@@ -582,6 +624,9 @@ Connection* EventLoop::create_connection(int fd) noexcept
  */
 void EventLoop::destroy_connection(Connection* conn) noexcept
 {
+    // 先移除链表（幂等：不在链表中则无操作）
+    remove_from_keepalive_list(conn);
+
     int fd = conn->fd();
     DEBUG_LOG("fd=%d conn=%p state=%d", fd, (void*)conn,
               static_cast<int>(conn->state()));

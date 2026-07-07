@@ -46,6 +46,10 @@ void Connection::init(int fd, std::string root_dir,
     read_buf_.clear();
     request_.reset();
     response_.reset();
+    // 重置 Keep-Alive 链表状态（destroy_connection 已移除，这里防御性清理）
+    keepalive_prev_ = nullptr;
+    keepalive_next_ = nullptr;
+    in_keepalive_list_ = false;
     DEBUG_LOG("fd=%d", fd);
 }
 
