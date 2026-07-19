@@ -43,6 +43,15 @@ cmake --build build
 2. **Connection 事件** → 运行连接状态机
 3. **Timer 事件**（每秒）→ 扫描并关闭超时的 keep-alive 连接
 
+### 目录列表功能
+
+当请求路径是目录且没有 `index.html` 时，`FileServer::open()` 返回 `FileError::IS_DIRECTORY`（而非原来的 403 Forbidden）。`EventLoop::prepare_response()` 检测到后调用：
+
+1. `FileServer::list_directory()` — `opendir`/`readdir` 读取条目，过滤隐藏文件（`.` 开头）、按"目录在前文件在后"排序
+2. `FileServer::build_directory_html()` — 生成深色主题响应式 HTML 页面，含文件图标、大小格式化、修改时间；根目录不显示 `../` 链接
+
+安全性由 `normalize()` 的路径解析保证：点击 `../` 链接时，`FileServer::normalize()` 阻止路径逃逸。
+
 ### 连接状态机
 
 ```
@@ -100,11 +109,12 @@ KEEP_ALIVE     等下一个请求          回到 READING
 
 - **固定连接池** (`ConnectionPool<Connection>`, 16384 槽位) — 无动态连接分配
 - **全非阻塞 I/O**，基于 kqueue 事件驱动
-- **文件服务安全性**：路径规范化拒绝 `..` 逃逸、点文件、空字节；符号链接解析后验证仍在根目录内；目录请求自动查找 `index.html`
+- **文件服务安全性**：路径规范化拒绝 `..` 逃逸、点文件、空字节；符号链接解析后验证仍在根目录内；目录请求自动查找 `index.html`，无 index.html 则生成目录列表
 - **TLS**：可选，连接级 SSL 对象按需分配。TLS 下退化为 pread+SSL_write 分块发送（sendfile 不适用于 TLS）
 - **非 TLS 用 `sendfile()`** 零拷贝发送文件体
 - **HTTP Range**（单区间）、**If-Modified-Since**、**HEAD** 方法、keep-alive 均支持
 - **头部预构建**为一个字符串一次性发送，体单独通过 sendfile 或 TLS 分块循环发送
+- **百分号解码**：`normalize()` 中 `%XX` 解码全部非零字节（0x01-0xFF），支持 UTF-8 多字节路径（中文文件名等）。拒绝空字节（`%00`）和控制字符
 
 ### 依赖
 
