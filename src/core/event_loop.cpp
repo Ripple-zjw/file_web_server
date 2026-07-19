@@ -437,6 +437,24 @@ void EventLoop::prepare_response(Connection* conn) noexcept
     // 打开请求文件
     auto result = file_server_.open(req.path());
     if (auto* err = std::get_if<FileError>(&result)) {
+        // IS_DIRECTORY：生成目录列表页面
+        if (*err == FileError::IS_DIRECTORY) {
+            auto norm = FileServer::normalize(req.path());
+            bool show_parent = (norm != "/");
+            auto entries = file_server_.list_directory(req.path());
+            auto html = FileServer::build_directory_html(req.path(), entries, show_parent);
+            DEBUG_LOG("directory listing fd=%d path=%.*s entries=%zu",
+                      conn->fd(),
+                      static_cast<int>(req.path().size()), req.path().data(),
+                      entries.size());
+            resp.set_status(HttpResponse::Status::OK);
+            resp.set_body(std::move(html));
+            resp.set_content_type("text/html; charset=utf-8");
+            resp.set_content_length(resp.body().size());
+            conn->prepare_headers();
+            return;
+        }
+
         HttpResponse::Status st;
         switch (*err) {
         case FileError::NOT_FOUND:   st = HttpResponse::Status::NOT_FOUND; break;

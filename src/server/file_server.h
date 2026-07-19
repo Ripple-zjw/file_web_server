@@ -70,9 +70,18 @@ struct FileInfo {
 
 /// 文件访问错误类型
 enum class FileError : uint8_t {
-    NOT_FOUND,   ///< 文件不存在
-    FORBIDDEN,   ///< 权限不足或路径逃逸
-    BAD_REQUEST, ///< 路径包含非法字符
+    NOT_FOUND,    ///< 文件不存在
+    FORBIDDEN,    ///< 权限不足或路径逃逸
+    BAD_REQUEST,  ///< 路径包含非法字符
+    IS_DIRECTORY, ///< 路径是目录（无 index.html），需生成目录列表
+};
+
+/// 目录条目信息
+struct DirEntry {
+    std::string name;          ///< 文件名
+    bool        is_directory;  ///< 是否为目录
+    off_t       size;          ///< 文件大小（字节）
+    std::time_t last_modified; ///< 最后修改时间
 };
 
 /// 文件访问结果：成功返回 FileInfo，失败返回 FileError
@@ -107,15 +116,34 @@ public:
     /// @return 文件服务根目录（绝对路径）
     const std::string& root_dir() const noexcept { return root_dir_; }
 
-private:
-    std::string root_dir_;
-
     /**
-     * @brief 规范化 URL 路径：百分号解码、解析 '.' 和 '..'、拒绝隐藏文件和控制字符。
+     * @brief 规范化 URL 路径：百分号解码、解析 '.' 和 '..'、拒绝非法字符。
      * @param path 原始 URL 路径
      * @return 规范化后的路径（如 "/docs/page.html"），非法输入返回空字符串
      */
     static std::string normalize(std::string_view path) noexcept;
+
+    /**
+     * @brief 获取目录下的文件列表（用于目录列表功能）。
+     * @param request_path 规范化后的目录 URL 路径
+     * @return 目录条目列表（已排序：目录在前，文件在后，各自按字母序）
+     */
+    std::vector<DirEntry> list_directory(std::string_view request_path) noexcept;
+
+    /**
+     * @brief 生成目录列表的 HTML 页面。
+     * @param request_path   当前请求路径（用于标题显示）
+     * @param entries        目录条目列表
+     * @param show_parent    是否显示返回上级目录的链接
+     * @return 完整的 HTML 页面字符串
+     */
+    static std::string build_directory_html(
+        std::string_view request_path,
+        const std::vector<DirEntry>& entries,
+        bool show_parent) noexcept;
+
+private:
+    std::string root_dir_;
 
     /**
      * @brief 验证解析后的路径是否在根目录范围内。

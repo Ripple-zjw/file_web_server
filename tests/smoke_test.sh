@@ -108,6 +108,41 @@ else
     fail "Keep-Alive request -> $KEEP_ALIVE (expected 200/403/404)"
 fi
 
+# 测试 9：目录列表 — GET / 返回包含文件列表的 HTML
+echo "--- Test: Directory listing (GET /)"
+ROOT_HTML=$(curl -s --max-time 3 "$BASE/")
+ROOT_CODE=$(curl $CURL_OPTS "$BASE/")
+if [ "$ROOT_CODE" = "200" ]; then
+    if echo "$ROOT_HTML" | grep -qi "Index of\|<td"; then
+        pass "Directory listing GET / -> $ROOT_CODE with HTML table"
+    else
+        fail "Directory listing GET / -> $ROOT_CODE (200 but no HTML table)"
+    fi
+else
+    fail "Directory listing GET / -> $ROOT_CODE (expected 200)"
+fi
+
+# 测试 10：目录列表 — 子目录有 ../ 链接，根目录没有
+echo "--- Test: Directory listing parent link"
+SRC_URL="$BASE/src/"
+# grep -c 找不到匹配时也会返回非零，加 || true 避免 set -e 中断
+PARENT_COUNT=$(curl -s --max-time 3 "$SRC_URL" | grep -c 'class="parent"' || true)
+ROOT_PARENT=$(curl -s --max-time 3 "$BASE/" | grep -c 'class="parent"' || true)
+if [ "$PARENT_COUNT" -ge 1 ] && [ "$ROOT_PARENT" -eq 0 ]; then
+    pass "Parent link: correct (subdir has ../, root has not)"
+else
+    fail "Parent link: subdir parent=$PARENT_COUNT root parent=$ROOT_PARENT (expected >=1 and 0)"
+fi
+
+# 测试 11：目录列表 — ../ 导航安全（不应逃逸到根目录外）
+echo "--- Test: Directory listing path escape"
+ESCAPE_CODE=$(curl $CURL_OPTS --path-as-is "$BASE/src/../../")
+if [ "$ESCAPE_CODE" = "400" ] || [ "$ESCAPE_CODE" = "403" ]; then
+    pass "Path escape rejected -> $ESCAPE_CODE"
+else
+    fail "Path escape -> $ESCAPE_CODE (expected 400 or 403)"
+fi
+
 # 测试 8：Content-Type 检查（README.md）
 echo "--- Test: Content-Type for README.md"
 CT=$(curl -s -o /dev/null -w "%{content_type}" --max-time 3 "$BASE/README.md")
