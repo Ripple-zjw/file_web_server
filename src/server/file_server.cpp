@@ -57,7 +57,7 @@ std::string FileServer::normalize(std::string_view path) noexcept
             char hex[3] = {path[i + 1], path[i + 2], 0};
             char* end = nullptr;
             long val = std::strtol(hex, &end, 16);
-            if (end == hex + 2 && val > 0 && val < 128) {
+            if (end == hex + 2 && val > 0) {
                 decoded += static_cast<char>(val);
                 i += 2;
                 continue;
