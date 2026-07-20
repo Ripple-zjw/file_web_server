@@ -9,6 +9,8 @@ jobs:
   build:
     name: Build Release on macOS ARM64
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -29,7 +31,7 @@ jobs:
           tar czf web_server-macos-universal.tar.gz -C build web_server
 
       - name: Create Release and upload artifact
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.2.2
         with:
           files: web_server-macos-universal.tar.gz
           generate_release_notes: true
