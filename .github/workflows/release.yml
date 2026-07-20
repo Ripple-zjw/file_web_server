@@ -1,0 +1,35 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Release on macOS ARM64
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install OpenSSL
+        run: brew install openssl@3
+
+      - name: Configure CMake (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Create archive
+        run: |
+          strip build/web_server
+          tar czf web_server-macos-universal.tar.gz -C build web_server
+
+      - name: Create Release and upload artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: web_server-macos-universal.tar.gz
+          generate_release_notes: true

@@ -116,6 +116,17 @@ KEEP_ALIVE     等下一个请求          回到 READING
 - **头部预构建**为一个字符串一次性发送，体单独通过 sendfile 或 TLS 分块循环发送
 - **百分号解码**：`normalize()` 中 `%XX` 解码全部非零字节（0x01-0xFF），支持 UTF-8 多字节路径（中文文件名等）。拒绝空字节（`%00`）和控制字符
 
+### 发布流程
+
+GitHub Actions 在推送 `v*` 标签时自动构建 Release 版本：
+
+```bash
+git tag v1.0.0                # 打好版本标签
+git push origin v1.0.0        # 推送标签触发构建
+```
+
+构建产物 `web_server-macos-universal.tar.gz` 自动上传到对应 GitHub Release 页面。
+
 ### 依赖
 
 - C++20, OpenSSL (`libssl`, `libcrypto`)
